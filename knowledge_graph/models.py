@@ -8,6 +8,7 @@ class Element(BaseModel):
     selector: str = Field(description="CSS selector to locate this element")
     element_type: str = Field(description="One of: button | link | input | text | image | nav | form | section | icon")
     page_region: str = Field(description="One of: header | hero | main | footer | sidebar | modal | nav")
+    page_url: str = Field(default="", description="URL of the page this element was found on")
     attributes: str = Field(default="", description='Relevant HTML attributes as a JSON string, e.g. {"href": "/about", "type": "button", "aria-label": "Close"}')
 
 
@@ -48,20 +49,34 @@ class AgentFlow(BaseModel):
     test_cases: list[str] = Field(description="2-3 test scenarios e.g. ['Valid submission', 'Empty required field']")
 
 
+class AgentPageSummary(BaseModel):
+    url: str = Field(description="URL of this page")
+    title: str = Field(description="Page title or main heading")
+    summary: str = Field(description="1-2 sentence overview of what this page is and does")
+
+
 class AgentExploration(BaseModel):
-    url: str = Field(description="The URL explored")
-    page_title: str = Field(description="Page title or main heading")
-    summary: str = Field(description="1-2 sentence overview of what the page is and does")
-    flows: list[AgentFlow] = Field(description="All user flows found on the page")
-    interactions: list[str] = Field(description="Flat list of every interactive element found e.g. ['Nav: Home link', 'Button: Get Started', 'Input: Email field']")
+    url: str = Field(description="The root/starting URL explored")
+    page_title: str = Field(description="Title of the root page")
+    summary: str = Field(description="1-2 sentence overview of the entire website")
+    pages: list[AgentPageSummary] = Field(default_factory=list, description="Summary of each internal page visited")
+    flows: list[AgentFlow] = Field(description="All user flows found across all visited pages")
+    interactions: list[str] = Field(description="Flat list of every interactive element found across all pages, e.g. ['[/about] Nav: Home link', '[/] Button: Get Started']")
+
+
+class PageSummary(BaseModel):
+    url: str = Field(description="URL of this page")
+    title: str = Field(description="Page title")
+    element_ids: list[str] = Field(default_factory=list, description="IDs of elements on this page")
 
 
 class WebsiteKnowledgeGraph(BaseModel):
-    url: str = Field(description="The URL of the page explored")
-    page_title: str = Field(description="The <title> or main heading of the page")
-    elements: list[Element] = Field(description="All individual UI elements found on the page")
+    url: str = Field(description="The root URL of the website explored")
+    page_title: str = Field(description="The <title> or main heading of the root page")
+    pages: list[PageSummary] = Field(default_factory=list, description="All internal pages visited during exploration")
+    elements: list[Element] = Field(description="All individual UI elements found across all pages")
     components: list[Component] = Field(description="Logical groupings of elements into components")
-    flows: list[Flow] = Field(description="User interaction sequences from start to completion")
+    flows: list[Flow] = Field(description="User interaction sequences from start to completion, may span multiple pages")
     features: list[Feature] = Field(description="Broad capabilities grouping one or more flows")
 
 
@@ -124,3 +139,45 @@ class ExplorationResult(BaseModel):
     action_logs: list[ActionLog] = Field(description="Log of every action performed")
     state_transitions: list[StateTransition] = Field(description="State transitions that produced DOM changes")
     states: list[DOMState] = Field(description="All unique page states encountered")
+
+
+# ── New State-Action schema nodes (v2) ────────────────────────────────────────
+
+class PageNode(BaseModel):
+    template_url: str = Field(description="Canonicalized URL with path params tokenized, e.g. /products/{id}")
+    original_url: str = Field(description="Original URL before canonicalization")
+    title: str = Field(default="")
+
+
+class StateNode(BaseModel):
+    signature: str = Field(description="SHA256[:24] of url_path|dom_hash|auth_flag|modal_flag")
+    page_id: str = Field(description="SHA256[:16] of template_url")
+    url_path: str = Field(description="URL path at this state")
+    dom_hash: str = Field(description="MD5 of visible text snapshot")
+    auth_flag: bool = Field(default=False, description="User appears authenticated")
+    modal_flag: bool = Field(default=False, description="Modal/dialog is open")
+    description: str = Field(default="")
+
+
+class ElementNode(BaseModel):
+    selector_id: str = Field(description="SHA256[:16] of the best available selector")
+    state_id: str = Field(description="StateNode.signature this element was observed in")
+    tag: str
+    text: str = Field(default="")
+    testid_selector: str = Field(default="")
+    aria_selector: str = Field(default="")
+    css_selector: str = Field(default="")
+    xpath_selector: str = Field(default="")
+    selector_stability_score: float = Field(description="1.0=testid, 0.8=aria, 0.5=css, 0.2=xpath")
+    attributes: dict = Field(default_factory=dict)
+
+
+class ActionNode(BaseModel):
+    id: str = Field(description="Unique action ID e.g. act_0001")
+    verb: str = Field(description="click | type | select | hover | submit | navigate")
+    element_selector_id: str = Field(description="ElementNode.selector_id of the target element")
+    state_before_id: str = Field(description="StateNode.signature before the action")
+    state_after_id: str = Field(description="StateNode.signature after the action")
+    observed_count: int = Field(default=1)
+    last_seen: float = Field(default=0.0)
+    dom_diff_hash: str = Field(default="")

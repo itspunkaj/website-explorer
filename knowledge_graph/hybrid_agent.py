@@ -9,12 +9,19 @@ from .models import (
     ExplorationResult, WebsiteKnowledgeGraph,
 )
 
-_SYSTEM_PROMPT = """You are a UI analyst. You receive structured data extracted by a real browser session (Playwright) and must produce a knowledge graph of the website's structure.
+_SYSTEM_PROMPT = """You are a UI analyst. You receive structured data extracted by a real multi-page browser session (Playwright) and must produce a knowledge graph of the entire website's structure.
 
 Output valid JSON matching this exact schema:
 {
-  "url": "<string>",
-  "page_title": "<string>",
+  "url": "<string — root URL of the website>",
+  "page_title": "<string — title of the root/home page>",
+  "pages": [
+    {
+      "url": "<page URL>",
+      "title": "<page title>",
+      "element_ids": ["elem_001"]
+    }
+  ],
   "elements": [
     {
       "id": "<elem_XXX — use exact IDs from the input data>",
@@ -23,6 +30,7 @@ Output valid JSON matching this exact schema:
       "selector": "<CSS selector from input>",
       "element_type": "<button|link|input|text|image|nav|form|section|icon>",
       "page_region": "<header|hero|main|footer|sidebar|modal|nav>",
+      "page_url": "<URL of the page this element belongs to>",
       "attributes": "<JSON string of relevant attributes>"
     }
   ],
@@ -38,11 +46,11 @@ Output valid JSON matching this exact schema:
   "flows": [
     {
       "id": "flow_001",
-      "name": "<short name e.g. Submit Contact Form>",
-      "description": "<end-to-end description>",
+      "name": "<short name e.g. Complete Checkout>",
+      "description": "<end-to-end description, may span multiple pages>",
       "component_ids": ["comp_001"],
       "steps": [
-        { "step_number": 1, "element_id": "elem_001", "action": "<click|type|hover|scroll|submit|focus|select>", "description": "<what the user does>" }
+        { "step_number": 1, "element_id": "elem_001", "action": "<click|type|hover|scroll|submit|focus|select>", "description": "<what the user does, include page context if navigating>" }
       ]
     }
   ],
@@ -59,18 +67,24 @@ Output valid JSON matching this exact schema:
 STRICT RULES:
 - Only reference element IDs that exist in the provided interactive_elements list.
 - Base flows on actual observed state transitions and action logs — do not invent interactions.
+- Flows may span multiple pages; model cross-page navigation steps explicitly.
 - element_type must be one of: button | link | input | text | image | nav | form | section | icon
 - page_region must be one of: header | hero | main | footer | sidebar | modal | nav
 - component_type must be one of: navigation | form | hero | section | footer | cta | card | modal | banner
 - action must be one of: click | type | hover | scroll | submit | focus | select
-- attributes field must be a JSON-encoded string, not an object."""
+- attributes field must be a JSON-encoded string, not an object.
+- page_url on each element must match an actual visited page URL from the input."""
 
-_TASK_TEMPLATE = """Analyze this website and build a knowledge graph.
+_TASK_TEMPLATE = """Analyze this multi-page website and build a complete knowledge graph.
 
-URL: {url}
-Page Title: {page_title}
+Root URL: {url}
+Home Page Title: {page_title}
+Pages Visited: {page_count}
 
-── INTERACTIVE ELEMENTS ({elem_count} visible) ──────────────────────────────
+── PAGES VISITED ─────────────────────────────────────────────────────────────
+{pages_json}
+
+── INTERACTIVE ELEMENTS ({elem_count} visible across all pages) ──────────────
 {elements_json}
 
 ── ACTION LOGS (observed interactions) ──────────────────────────────────────
@@ -80,10 +94,11 @@ Page Title: {page_title}
 {transitions_json}
 
 Instructions:
-1. Include ALL interactive elements in the elements list (use exact elem_ids from above).
-2. Group elements into logical components.
-3. Create flows grounded in the observed transitions — if clicking elem_X caused a state change, that element belongs in a flow.
-4. Group flows into high-level features."""
+1. Include ALL interactive elements in the elements list (use exact elem_ids from above); set page_url on each element.
+2. Populate the pages list with all visited URLs and their element IDs.
+3. Group elements into logical components (shared components like nav/footer can appear on multiple pages).
+4. Create flows grounded in the observed transitions — cross-page flows should chain navigation steps.
+5. Group flows into high-level features."""
 
 _VALID_ELEMENT_TYPES = {"button", "link", "input", "text", "image", "nav", "form", "section", "icon"}
 _VALID_REGIONS = {"header", "hero", "main", "footer", "sidebar", "modal", "nav"}
@@ -212,9 +227,28 @@ async def run_hybrid_agent(
     if len(transitions_json) > 2_000:
         transitions_json = transitions_json[:2_000] + "\n... (truncated)"
 
+    # Build pages list from visited URLs tracked in dom_result / exploration_result
+    visited_urls: list[str] = getattr(dom_result, "visited_urls", None) or [dom_result.url]
+    pages_data = [
+        {
+            "url": page_url,
+            "title": dom_result.page_title if page_url == dom_result.url else page_url,
+            "element_ids": [
+                el.elem_id for el in visible
+                if getattr(el, "page_url", dom_result.url) == page_url
+            ],
+        }
+        for page_url in visited_urls
+    ]
+    pages_json = json.dumps(pages_data, indent=2)
+    if len(pages_json) > 2_000:
+        pages_json = pages_json[:2_000] + "\n... (truncated)"
+
     task = _TASK_TEMPLATE.format(
         url=dom_result.url,
         page_title=dom_result.page_title,
+        page_count=len(visited_urls),
+        pages_json=pages_json,
         elem_count=len(elements_data),
         elements_json=elements_json,
         action_logs_json=action_logs_json,
@@ -244,6 +278,7 @@ async def run_hybrid_agent(
     return WebsiteKnowledgeGraph.model_validate({
         "url": raw.get("url") or dom_result.url,
         "page_title": raw.get("page_title") or dom_result.page_title,
+        "pages": raw.get("pages") or pages_data,
         "elements": [e.model_dump() for e in parsed_elements],
         "components": raw.get("components") or [],
         "flows": raw.get("flows") or [],

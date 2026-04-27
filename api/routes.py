@@ -12,11 +12,14 @@ from knowledge_graph.db import (
     get_all_websites,
     get_kg_data,
     get_website,
+    save_agent_exploration,
     save_kg_data,
+    save_state_graph,
     update_website_status,
 )
 from knowledge_graph.dom_extractor import extract_dom
 from knowledge_graph.dom_explorer import explore_dom
+from knowledge_graph.exploration_agent import run_exploration_agent
 from knowledge_graph.hybrid_agent import run_hybrid_agent
 from knowledge_graph.neo4j_client import ingest_to_neo4j
 
@@ -26,49 +29,51 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 
 async def _run_pipeline(website_id: int, url: str):
     try:
-        # ── PHASE 1: DOM Extraction (Playwright) ──────────────────────────────
-        # Comment out to disable Playwright DOM extraction.
-        dom_result = await extract_dom(url)
-        update_website_status(website_id, "running", title=dom_result.page_title)
+        # ── PHASE 1: Agent Exploration (browser-use + GPT-4.1-mini) ──────────
+        # The LLM visually browses the page and identifies user flows/interactions.
+        # Comment out to skip agent exploration.
+        exploration = await run_exploration_agent(url)
+        update_website_status(website_id, "running", title=exploration.page_title)
+        save_agent_exploration(website_id, exploration)
         # ──────────────────────────────────────────────────────────────────────
 
-        # ── PHASE 2: DOM Exploration (Playwright) ─────────────────────────────
-        # Comment out to disable interactive element exploration.
+        # ── PHASE 2a: DOM Extraction (Playwright) ────────────────────────────
+        # Deterministic structural snapshot — real elements, selectors, attributes.
+        # Comment out to skip Playwright DOM extraction.
+        dom_result = await extract_dom(url)
+        # ──────────────────────────────────────────────────────────────────────
+
+        # ── PHASE 2b: DOM Exploration (Playwright) ───────────────────────────
+        # Click every interactive element, track mutations, state transitions.
+        # Comment out to skip interactive exploration.
         exploration_result = await explore_dom(url, dom_result)
         # ──────────────────────────────────────────────────────────────────────
 
-        # ── PHASE 3: Agent Exploration — OLD LLM visual browser ───────────────
-        # To re-enable: uncomment the block below AND add these imports at the top:
-        #   from knowledge_graph.exploration_agent import run_exploration_agent
-        #   from knowledge_graph.db import save_agent_exploration
-        #
-        # exploration = await run_exploration_agent(url)
-        # update_website_status(website_id, "running", title=exploration.page_title)
-        # save_agent_exploration(website_id, exploration)
-        # ──────────────────────────────────────────────────────────────────────
-
-        # ── PHASE 4: KG Creation — HYBRID (Playwright data + LLM) ────────────
-        # Comment out to disable the hybrid KG agent.
+        # ── PHASE 2c: Hybrid KG Creation (Playwright data + GPT-4.1) ─────────
+        # LLM receives structured DOM + action logs → outputs the knowledge graph.
+        # Comment out to skip KG creation.
         kg = await run_hybrid_agent(dom_result, exploration_result)
         # ──────────────────────────────────────────────────────────────────────
 
-        # ── PHASE 5: KG Creation — OLD LLM visual browser ────────────────────
-        # To re-enable: uncomment the line below AND add this import at the top:
-        #   from knowledge_graph.agent import run_agent
-        # Also comment out Phase 4 above so only one KG agent runs.
-        #
-        # kg = await run_agent(url)
+        # ── PHASE 2d: Neo4j ingestion (new State-Action schema) ──────────────
+        graph = ingest_to_neo4j(kg, exploration=exploration_result)
+        save_state_graph(
+            website_id,
+            graph["page"],
+            graph["state_nodes"],
+            graph["elem_nodes"],
+            graph["action_nodes"],
+            exploration_result.state_transitions,
+            graph["state_sig_map"],
+            graph["action_map"],
+        )
         # ──────────────────────────────────────────────────────────────────────
 
-        # ── PHASE 6: Neo4j ingestion ──────────────────────────────────────────
-        # exploration_result adds State nodes + LEADS_TO / TRANSITIONS_TO edges.
-        # When running old pipeline (phases 3+5), use: ingest_to_neo4j(kg)
-        ingest_to_neo4j(kg, exploration=exploration_result)
-        # ──────────────────────────────────────────────────────────────────────
-
+        # Compare KG flows against what the agent found → marks missed_by_agent
         agent_flows = get_agent_exploration(website_id)["flows"]
         save_kg_data(website_id, kg, agent_flows)
-        update_website_status(website_id, "done", title=dom_result.page_title)
+
+        update_website_status(website_id, "done", title=exploration.page_title)
 
     except Exception as exc:
         update_website_status(website_id, "error", error=str(exc))
