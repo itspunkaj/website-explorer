@@ -1,5 +1,75 @@
 # Website Knowledge Graph Explorer
 
+## Getting Started
+
+### Prerequisites
+
+- Python 3.11+
+- [Neo4j Desktop](https://neo4j.com/download/) (or any Neo4j instance) running locally on `bolt://localhost:7687`
+- OpenAI API key (required for Phase 2 synthesis via GPT-4.1)
+
+### 1. Install dependencies
+
+```bash
+python -m venv .venv
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+playwright install chromium
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in the required values:
+
+```
+OPENAI_API_KEY=sk-...
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your-neo4j-password
+```
+
+Add `ANTHROPIC_API_KEY` if you want to use the standalone `main.py` agent with Claude.
+
+### 3. Run the web app (recommended)
+
+```bash
+python app.py
+```
+
+Open [http://localhost:8000](http://localhost:8000) in your browser, enter a URL, and the full pipeline runs via the UI.
+
+### 4. Run the full KG pipeline from the CLI
+
+Edit the `TARGET_URL` at the top of `kg_run.py`, then:
+
+```bash
+python kg_run.py
+```
+
+This runs Phase 1 (agent exploration) + Phase 2 (Playwright DOM extraction + synthesis) and writes the result to Neo4j and a local JSON file.
+
+### 5. Run the simple browser agent only
+
+```bash
+python main.py
+```
+
+This runs a standalone Browser-Use agent with Claude and prints the raw exploration result — no KG or Neo4j involved.
+
+### 6. Explore the graph in Neo4j Browser
+
+Open [http://localhost:7474](http://localhost:7474) and run:
+
+```cypher
+MATCH (n) RETURN n LIMIT 100
+```
+
+---
+
 ## 1. Approach & Architecture
 
 The system automates the discovery of user flows, UI interactions, and test scenarios across any website by combining two complementary exploration strategies and persisting findings in a queryable graph database.
@@ -14,7 +84,7 @@ User submits URL
 │  PHASE 1 — Visual Agent Exploration                     │
 │  Browser-Use agent (GPT-4.1-mini) browses the site,     │
 │  follows internal links, scrolls each page, and         │
-│  extracts flows, interactions, and page summaries.       │
+│  extracts flows, interactions, and page summaries.      │
 └─────────────────────┬───────────────────────────────────┘
                       │
                       ▼
@@ -35,7 +105,7 @@ User submits URL
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────┐
-│  PHASE 2c — Hybrid KG Synthesis (GPT-4.1)              │
+│  PHASE 2c — Hybrid KG Synthesis (GPT-4.1)               │
 │  LLM receives structured DOM data + action logs and     │
 │  outputs a validated WebsiteKnowledgeGraph: elements,   │
 │  components, flows, and features.                       │
