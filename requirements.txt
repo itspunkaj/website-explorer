@@ -1,0 +1,9 @@
+browser-use
+fastapi
+uvicorn
+python-dotenv
+pydantic
+openai
+neo4j
+playwright
+httpx

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}KG Explorer — Home{% endblock %}
+
+{% block head %}
+<style>
+  .hero { text-align: center; padding: 48px 0 40px; }
+  .hero h1 { font-size: 32px; font-weight: 800; margin-bottom: 10px; background: linear-gradient(135deg, #a78bfa, #60a5fa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .hero p { color: #94a3b8; font-size: 15px; }
+
+  .explore-form { display: flex; gap: 10px; max-width: 620px; margin: 28px auto 0; }
+  .explore-form input { flex: 1; background: #1a1d27; border: 1px solid #3d4166; border-radius: 8px; padding: 12px 16px; color: #e2e8f0; font-size: 14px; outline: none; }
+  .explore-form input:focus { border-color: #6366f1; }
+  .explore-form button { background: #6366f1; color: #fff; border: none; border-radius: 8px; padding: 12px 24px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .explore-form button:hover { background: #4f46e5; }
+
+  .websites-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 40px; }
+  .site-card { display: block; text-decoration: none; color: inherit; background: #1a1d27; border: 1px solid #2d3148; border-radius: 12px; padding: 18px; transition: border-color 0.15s; }
+  .site-card:hover { border-color: #6366f1; }
+  .site-url { font-size: 13px; font-weight: 600; color: #a78bfa; word-break: break-all; margin-bottom: 6px; }
+  .site-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+  .site-meta { font-size: 12px; color: #6b7280; margin-top: 8px; }
+
+  .empty { text-align: center; color: #4b5563; padding: 60px 0; font-size: 15px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hero">
+  <h1>Website KG Explorer</h1>
+  <p>Paste a URL to explore user interactions and build a Neo4j knowledge graph</p>
+  <form class="explore-form" action="/explore" method="post">
+    <input type="text" name="url" placeholder="https://example.com" required />
+    <button type="submit">Explore →</button>
+  </form>
+</div>
+
+{% if websites %}
+<div>
+  <div class="section-header">Previously Explored</div>
+  <div class="websites-grid">
+    {% for site in websites %}
+    <a class="site-card" href="/website/{{ site.id }}">
+      <div class="site-url">{{ site.url }}</div>
+      <div class="site-title">{{ site.title or '—' }}</div>
+      <div>
+        {% if site.status == 'done' %}
+          <span class="badge badge-green">Done</span>
+        {% elif site.status == 'running' %}
+          <span class="badge badge-blue">Running…</span>
+        {% elif site.status == 'error' %}
+          <span class="badge badge-red">Error</span>
+        {% else %}
+          <span class="badge badge-gray">Pending</span>
+        {% endif %}
+      </div>
+      {% if site.explored_at %}
+        <div class="site-meta">{{ site.explored_at[:16] }} UTC</div>
+      {% endif %}
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="empty">No websites explored yet. Enter a URL above to get started.</div>
+{% endif %}
+{% endblock %}

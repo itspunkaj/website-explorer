@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}{{ website.title or website.url }} — KG Explorer{% endblock %}
+
+{% block head %}
+<style>
+  /* Header */
+  .page-header { margin-bottom: 28px; }
+  .page-url { font-size: 13px; color: #a78bfa; margin-bottom: 4px; }
+  .page-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .page-title { font-size: 22px; font-weight: 700; }
+
+  /* Status banner */
+  .status-bar { background: #1a1d27; border: 1px solid #2d3148; border-radius: 10px; padding: 14px 20px; margin-bottom: 24px; display: flex; align-items: center; gap: 12px; font-size: 14px; }
+  .status-bar.running { border-color: #3b82f6; }
+  .status-bar.error { border-color: #ef4444; }
+  .status-bar.done { border-color: #22c55e; }
+
+  /* Two columns */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+  .panel { background: #1a1d27; border: 1px solid #2d3148; border-radius: 12px; padding: 22px; }
+  .panel-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .panel-sub { font-size: 12px; color: #6b7280; margin-bottom: 18px; }
+
+  /* Summary box */
+  .summary-box { background: #12141e; border-left: 3px solid #6366f1; border-radius: 0 8px 8px 0; padding: 12px 16px; font-size: 13px; color: #cbd5e1; line-height: 1.6; margin-bottom: 18px; }
+
+  /* Interactions list */
+  .interactions-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+  .interaction-tag { font-size: 11px; background: #1e2235; border: 1px solid #3d4166; border-radius: 6px; padding: 3px 8px; color: #94a3b8; }
+
+  /* Feature tree */
+  .feature-block { margin-bottom: 16px; }
+  .feature-name { font-size: 13px; font-weight: 700; color: #818cf8; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .feature-desc { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
+
+  /* Neo4j link */
+  .neo4j-link { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #a78bfa; text-decoration: none; border: 1px solid #3d4166; border-radius: 6px; padding: 5px 12px; margin-top: 16px; }
+  .neo4j-link:hover { border-color: #6366f1; }
+
+  /* Spinner overlay for running state */
+  .loading-msg { color: #94a3b8; font-size: 13px; text-align: center; padding: 40px 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Page header -->
+<div class="page-header">
+  <div class="page-url">{{ website.url }}</div>
+  <div class="page-title-row">
+    <span class="page-title">{{ website.title or 'Exploring…' }}</span>
+    {% if website.status == 'done' %}
+      <span class="badge badge-green">Done</span>
+    {% elif website.status == 'running' %}
+      <span class="badge badge-blue">Running</span>
+    {% elif website.status == 'error' %}
+      <span class="badge badge-red">Error</span>
+    {% endif %}
+  </div>
+  {% if website.explored_at %}
+    <div class="text-muted mt-2">Explored {{ website.explored_at[:16] }} UTC</div>
+  {% endif %}
+</div>
+
+<!-- Status bar -->
+{% if website.status == 'running' %}
+<div class="status-bar running" id="status-bar">
+  <div class="spinner"></div>
+  <span id="status-text">Running pipeline — Phase 1: exploring interactions…</span>
+</div>
+{% elif website.status == 'error' %}
+<div class="status-bar error">
+  <span>⚠ Error: {{ website.error_message }}</span>
+</div>
+{% endif %}
+
+<!-- Dashboard -->
+{% if website.status in ['done', 'running'] %}
+<div class="two-col">
+
+  <!-- LEFT: Agent Exploration -->
+  <div class="panel">
+    <div class="panel-title">🤖 Agent Exploration</div>
+    <div class="panel-sub">Flows &amp; test cases found by Browser-Use + GPT-4.1-mini</div>
+
+    {% if agent_data.summary %}
+    <div class="summary-box">{{ agent_data.summary }}</div>
+    {% endif %}
+
+    {% if agent_data.interactions %}
+    <div class="section-header">Interactions Found ({{ agent_data.interactions | length }})</div>
+    <div class="interactions-list mb-1">
+      {% for item in agent_data.interactions %}
+        <span class="interaction-tag">{{ item }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if agent_data.flows %}
+    <div class="section-header mt-3">Flows ({{ agent_data.flows | length }})</div>
+    {% for flow in agent_data.flows %}
+    <div class="flow-card">
+      <div class="flow-title">{{ flow.name }}</div>
+      <div class="flow-desc">{{ flow.description }}</div>
+      {% if flow.steps %}
+      <ol class="flow-steps">
+        {% for step in flow.steps %}<li>{{ step }}</li>{% endfor %}
+      </ol>
+      {% endif %}
+      {% if flow.test_cases %}
+      <div class="test-cases">
+        {% for tc in flow.test_cases %}<span class="tc">✓ {{ tc }}</span>{% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% elif website.status == 'running' %}
+    <div class="loading-msg"><div class="spinner" style="margin:0 auto 12px"></div>Waiting for agent…</div>
+    {% endif %}
+  </div>
+
+  <!-- RIGHT: Knowledge Graph Exploration -->
+  <div class="panel">
+    <div class="panel-title">🕸 Knowledge Graph Exploration</div>
+    <div class="panel-sub">Structured graph built by GPT-4.1 — highlights flows missed by agent</div>
+
+    {% if kg_data %}
+    <div class="stat-row">
+      <div class="stat"><div class="num">{{ kg_data.features | length }}</div><div class="lbl">Features</div></div>
+      <div class="stat"><div class="num">{{ kg_data.flow_count }}</div><div class="lbl">Flows</div></div>
+      <div class="stat"><div class="num">{{ kg_data.component_count }}</div><div class="lbl">Components</div></div>
+      <div class="stat"><div class="num">{{ kg_data.element_count }}</div><div class="lbl">Elements</div></div>
+      {% if kg_data.missed_count > 0 %}
+      <div class="stat"><div class="num" style="color:#fbbf24">{{ kg_data.missed_count }}</div><div class="lbl">Missed</div></div>
+      {% endif %}
+    </div>
+
+    {% for feature in kg_data.features %}
+    <div class="feature-block">
+      <div class="feature-name">◆ {{ feature.name }}</div>
+      <div class="feature-desc">{{ feature.description }}</div>
+      {% for flow in feature.flows %}
+      <div class="flow-card {% if flow.missed_by_agent %}missed{% endif %}">
+        <div class="flow-title">
+          {{ flow.name }}
+          {% if flow.missed_by_agent %}
+            <span class="badge badge-yellow">⚠ Missed by Agent</span>
+          {% else %}
+            <span class="badge badge-green">✓ Also Found</span>
+          {% endif %}
+        </div>
+        <div class="flow-desc">{{ flow.description }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+
+    <a class="neo4j-link" href="http://localhost:7474" target="_blank">
+      🔗 Open in Neo4j Browser
+    </a>
+
+    {% elif website.status == 'running' %}
+    <div class="loading-msg"><div class="spinner" style="margin:0 auto 12px"></div>Building knowledge graph…</div>
+    {% endif %}
+  </div>
+
+</div>
+{% endif %}
+
+<!-- Polling script for running state -->
+{% if website.status == 'running' %}
+<script>
+  const id = {{ website.id }};
+  let phase = 1;
+  const statusText = document.getElementById('status-text');
+
+  const poll = setInterval(async () => {
+    const res = await fetch(`/api/website/${id}/status`);
+    const data = await res.json();
+
+    if (data.agent_flow_count > 0 && phase === 1) {
+      phase = 2;
+      if (statusText) statusText.textContent = `Phase 1 done (${data.agent_flow_count} flows found) — Running Phase 2: building knowledge graph…`;
+    }
+
+    if (data.status === 'done' || data.status === 'error') {
+      clearInterval(poll);
+      window.location.reload();
+    }
+  }, 3000);
+</script>
+{% endif %}
+{% endblock %}
